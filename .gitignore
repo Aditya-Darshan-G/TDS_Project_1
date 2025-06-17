@@ -1,0 +1,17 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Environment
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Output
+*.npz
+*.db
+
+# Vercel
+.vercel/
