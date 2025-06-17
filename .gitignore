@@ -1,17 +1,9 @@
-# Python bytecode
+# .gitignore
 __pycache__/
-*.py[cod]
-
-# Environment
+*.pyc
 .env
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Output
 *.npz
-*.db
-
-# Vercel
-.vercel/
+.ipynb_checkpoints/
+*.log
+.vscode/
+*.sqlite3
