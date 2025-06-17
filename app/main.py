@@ -162,3 +162,7 @@ async def query(request: QueryRequest):
 @app.get("/health")
 def health():
     return {"status": "ok", "chunks": len(chunks), "embeddings": len(embeddings)}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

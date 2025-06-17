@@ -1,0 +1,7 @@
+data/discourse_posts/
+data/chunks_output/
+data/tools-in-data-science-public/
+preprocessing/
+embedding/
+.env
+*.db
