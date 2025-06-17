@@ -9,6 +9,7 @@ import logging
 from dotenv import load_dotenv
 import asyncio
 from google import generativeai as genai
+from contextlib import asynccontextmanager
 
 # Load environment variables
 load_dotenv()
@@ -19,27 +20,32 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-EMBEDDING_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "embeddings.npz")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+EMBEDDING_FILE = os.path.join(BASE_DIR, "..", "data", "embeddings.npz")
 SIMILARITY_THRESHOLD = 0.68
 MAX_RESULTS = 10
 MAX_CONTEXT_CHUNKS = 4
 
-# Load Gemini
+# Configure Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Load embeddings
-try:
-    data = np.load(EMBEDDING_FILE, allow_pickle=True)
-    chunks = data["chunks"]
-    embeddings = data["embeddings"]
-    source_urls = data["source_urls"]
-except Exception as e:
-    logger.error("Failed to load embeddings: %s", e)
-    raise RuntimeError("Failed to load embeddings from disk")
+# Lifespan context for deferred loading
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        data = np.load(EMBEDDING_FILE, allow_pickle=True)
+        app.state.chunks = data["chunks"]
+        app.state.embeddings = data["embeddings"]
+        app.state.source_urls = data["source_urls"]
+        logger.info("Embeddings loaded successfully.")
+    except Exception as e:
+        logger.error("Failed to load embeddings: %s", e)
+        raise RuntimeError("Could not load embeddings from disk")
+    yield
 
 # App setup
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -82,7 +88,11 @@ async def embed_text(query: str):
         raise HTTPException(status_code=500, detail="Embedding failed")
 
 # Search
-def search_similar_chunks(query_emb):
+def search_similar_chunks(app, query_emb):
+    embeddings = app.state.embeddings
+    chunks = app.state.chunks
+    source_urls = app.state.source_urls
+
     scores = [cosine_similarity(query_emb, e) for e in embeddings]
     sorted_indices = np.argsort(scores)[::-1]
     seen_sources = set()
@@ -152,7 +162,7 @@ def extract_answer_and_links(text):
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     query_emb = await embed_text(request.question)
-    top_chunks = search_similar_chunks(query_emb)
+    top_chunks = search_similar_chunks(app, query_emb)
     if not top_chunks:
         return QueryResponse(answer="No relevant information found.", links=[])
     raw_output = await generate_answer(request.question, top_chunks)
@@ -161,9 +171,13 @@ async def query(request: QueryRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "chunks": len(chunks), "embeddings": len(embeddings)}
+    return {
+        "status": "ok",
+        "chunks": len(app.state.chunks),
+        "embeddings": len(app.state.embeddings)
+    }
 
 # Local dev run
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
