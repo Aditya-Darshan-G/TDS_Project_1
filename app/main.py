@@ -1,13 +1,9 @@
-# api/query.py
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 import os
-import sqlite3
 import numpy as np
-import base64
 import re
 import logging
 from dotenv import load_dotenv
@@ -23,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-EMBEDDING_FILE = "embeddings.npz"
+EMBEDDING_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "embeddings.npz")
 SIMILARITY_THRESHOLD = 0.68
 MAX_RESULTS = 10
 MAX_CONTEXT_CHUNKS = 4
@@ -33,10 +29,14 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
 # Load embeddings
-data = np.load(EMBEDDING_FILE, allow_pickle=True)
-chunks = data["chunks"]
-embeddings = data["embeddings"]
-source_urls = data["source_urls"]
+try:
+    data = np.load(EMBEDDING_FILE, allow_pickle=True)
+    chunks = data["chunks"]
+    embeddings = data["embeddings"]
+    source_urls = data["source_urls"]
+except Exception as e:
+    logger.error("Failed to load embeddings: %s", e)
+    raise RuntimeError("Failed to load embeddings from disk")
 
 # App setup
 app = FastAPI()
@@ -48,7 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request/response schemas
+# Schemas
 class QueryRequest(BaseModel):
     question: str
     image: Optional[str] = None
@@ -103,7 +103,7 @@ def search_similar_chunks(query_emb):
             break
     return results
 
-# LLM answer
+# Prompt builder
 def build_prompt(question: str, context_snippets: List[dict]) -> str:
     context = "\n\n".join([f"Source: {c['url']}\n{c['text']}" for c in context_snippets])
     return f"""
@@ -125,6 +125,7 @@ Sources:
 2. URL: <url_2>, Text: <quote or explanation>
 ..."""
 
+# Generate answer
 async def generate_answer(question: str, context_snippets: List[dict]):
     prompt = build_prompt(question, context_snippets)
     try:
@@ -134,7 +135,7 @@ async def generate_answer(question: str, context_snippets: List[dict]):
         logger.error("LLM generation failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to generate answer")
 
-# Parse response
+# Parse output
 def extract_answer_and_links(text):
     parts = text.split("Sources:", 1)
     answer = parts[0].strip()
@@ -147,7 +148,7 @@ def extract_answer_and_links(text):
                 links.append({"url": url.strip(), "text": snippet.strip()})
     return {"answer": answer, "links": links}
 
-# Main endpoint
+# API routes
 @app.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     query_emb = await embed_text(request.question)
@@ -158,11 +159,11 @@ async def query(request: QueryRequest):
     parsed = extract_answer_and_links(raw_output)
     return QueryResponse(answer=parsed["answer"], links=parsed["links"])
 
-# Health check
 @app.get("/health")
 def health():
     return {"status": "ok", "chunks": len(chunks), "embeddings": len(embeddings)}
 
+# Local dev run
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

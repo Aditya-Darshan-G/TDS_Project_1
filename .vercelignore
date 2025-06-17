@@ -5,3 +5,4 @@ preprocessing/
 embedding/
 .env
 *.db
+*.npz
